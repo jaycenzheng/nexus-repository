@@ -1,0 +1,58 @@
+---
+# defaults file for nexus
+nexus_release: 3.13.0-01
+
+media_mnt: /nexus_media
+media_server: ulesmedia.csda.gov.au
+media_path:  /local/media/sonatype/nexus/3.13.0/x86_64
+media_tar: nexus-{{ nexus_release }}-unix.tar
+
+install_dir: /opt
+data_dir: /var
+
+nexus_nfs_mnt: /blobs
+
+user_home_dir: /export/home/nexus
+
+owner: nexus
+group: nexus
+
+max_open_files: 65536
+
+satellite_server: dcvslx97.csda.gov.au
+oracle_java_yum_errata_date: 20180515
+
+lifecycle:
+   pre:
+      nexus_nfs_server: nfs-nexus-pre.csda.gov.au
+      nexus_nfs_path: /local/pre/nexus/data/nxrm/blobs
+      # Configured for 8GB RAM
+      min_heap_size: 2703M
+      max_heap_size: 2703M
+      max_direct_memory_size: 2703M
+
+   prd:
+      nexus_nfs_server: nfs-nexus.csda.gov.au
+      nexus_nfs_path: /local/nexus/data/nxrm/blobs
+      # Configured for 16GB RAM
+      min_heap_size: 4G
+      max_heap_size: 4G
+      max_direct_memory_size: 6717M
+
+filesystems:
+   - name: opt_nexus313001
+     pv: /dev/sdb
+     vg: appvg
+     size: 15G
+     fs: xfs
+     mountpoint: /opt/nexus-3.13.0-01
+     options: defaults
+
+   - name: var_sonatypework
+     pv: /dev/sdb
+     vg: appvg
+     size: +100%FREE
+     fs: xfs
+     mountpoint: /var/sonatype_work
+     options: defaults
+

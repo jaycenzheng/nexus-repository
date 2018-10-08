@@ -1,0 +1,231 @@
+---
+# tasks file for nexus
+
+- name: Create volume groups
+  lvg: 
+     pvs="{{ item.pv }}"
+     vg="{{ item.vg }}"
+  with_items: "{{ filesystems }}"
+  
+- name: Create logical volumes 
+  lvol:
+     lv="{{ item.name }}"
+     vg="{{ item.vg }}"
+     size="{{ item.size }}"
+     state=present
+  with_items: "{{ filesystems }}"
+
+- name: Create file systems
+  filesystem:
+     dev="/dev/mapper/{{ item.vg }}-{{ item.name }}"
+     fstype="{{ item.fs }}"
+  with_items: "{{ filesystems }}"
+
+- name: Mount file systems
+  mount: 
+     name="{{ item.mountpoint }}" 
+     src="/dev/mapper/{{ item.vg }}-{{ item.name }}" 
+     fstype="{{ item.fs }}"
+     opts="{{ item.options }}"
+     state=mounted
+  with_items: "{{ filesystems }}"
+
+
+- name: update packages
+    yum:
+      name: '*'
+      state: latest
+      update_cache: yes
+    
+- name: install jre and wget
+    yum:
+      name: "{{ item }}"
+      state: latest
+    with_items:
+      - wget
+      - java-1.8.0-openjdk.x86_64
+    
+- name: Get nexus repository manager
+  command: "wget https://download.sonatype.com/nexus/3/latest-unix.tar.gz -O /home/nexus/latest-unix.tar.gz"
+    
+- name: Unpack archive
+  unarchive:
+    copy: no
+    owner: nexus
+    src: /home/nexus/latest-unix.tar.gz
+    dest: /home/nexus/
+
+- name: Configure maximum open files
+  template:
+    src: templates/etc/security/limits.d/60-nexus.conf.j2
+    dest: /etc/security/limits.d/60-nexus.conf
+    owner: root
+    group: root
+    mode: 0644
+
+- name: Create user home dir
+  file:
+    path: "{{ user_home_dir }}"
+    state: directory
+    mode: 0755
+    owner: "{{ owner }}"
+    group: "{{ group }}"
+
+- name: Copy user skeleton files
+  copy:
+    src: "/etc/skel/{{ item }}"
+    dest: "{{ user_home_dir }}/{{ item }}"
+    backup: yes
+    owner: "{{ owner }}"
+    group: "{{ group }}"
+    mode: 0644
+  with_items:
+    - ".bash_logout"
+    - ".bash_profile"
+    - ".bashrc"
+    - ".kshrc"
+
+- name: Add Nexus home environment variable
+  lineinfile:
+     path: "{{ user_home_dir }}/.bashrc"
+     state: present
+     regexp: '^NEXUS_HOME='
+     line: "NEXUS_HOME={{ install_dir }}/nexus-{{ nexus_release }}; export NEXUS_HOME"
+     backup: yes
+
+- name: Create mountable dir for media server
+  file:
+    path: "{{ media_mnt }}"
+    state: directory
+    mode: 0755
+
+- name: Mount the media server and path to remote host
+  mount:
+    path: "{{ media_mnt }}"
+    src: "{{ media_server }}:{{ media_path }}"
+    fstype: nfs
+    state: mounted
+
+- name: Unpack archive
+  unarchive:
+    src: "{{ media_mnt }}/{{ media_tar }}"
+    dest: "{{ install_dir }}"
+    owner: "{{ owner }}"
+    group: "{{ group }}"
+    copy: no
+
+- name: Remove mounted dir
+  file:
+    path: "{{ media_mnt }}"
+    state: absent
+
+- name: Change ownership of install dir
+  file:
+     dest: "{{ install_dir }}/nexus-{{ nexus_release }}"
+     owner: "{{ owner }}"
+     group: "{{ group }}"
+     recurse: yes
+
+- name: Edit run user
+  lineinfile:
+     path: "{{ install_dir }}/nexus-{{ nexus_release }}/bin/nexus.rc"
+     state: present
+     regexp: '^run_as_user='
+     line: "run_as_user={{ owner }}"
+     backup: yes
+
+- name: Check data dir exists
+  stat:
+     path: "{{ data_dir }}/sonatype-work"
+  register: data_dir_check
+
+- name: Move data directory
+  shell: "mv {{ install_dir }}/sonatype-work/* {{ data_dir }}/sonatype-work/"
+  when: data_dir_check.stat.exists == false
+
+- name: Remove original data dir
+  file:
+    path: "{{ install_dir }}/sonatype-work"
+    state: absent
+
+- name: Change ownership of data dir
+  file:
+     dest: "{{ data_dir }}/sonatype-work"
+     owner: "{{ owner }}"
+     group: "{{ group }}"
+     recurse: yes
+
+- name: Create mountable dir for blob store
+  file:
+    path: "{{ nexus_nfs_mnt }}"
+    state: directory
+    mode: 0755
+
+- name: Mount the nfs server and path to nexus server
+  mount:
+    path: "{{ nexus_nfs_mnt }}"
+    src: "{{ lifecycle[env].nexus_nfs_server }}:{{ lifecycle[env].nexus_nfs_path }}"
+    fstype: nfs
+    state: mounted
+
+- name: Configuring the Data Directory
+  template:
+    src: templates/opt/nexus/bin/nexus.vmoptions.j2
+    dest: "{{ install_dir }}/nexus-{{ nexus_release }}/bin/nexus.vmoptions"
+    owner: "{{ owner }}"
+    group: "{{ group }}"
+    mode: 0744
+
+- name: Setup nexus.service file
+  template:
+    src: templates/lib/systemd/system/nexus.service.j2
+    dest: /lib/systemd/system/nexus.service
+    owner: root
+    group: root
+    mode: 0744
+
+- name: Start nexus server
+  systemd:
+    name: nexus
+    daemon_reload: yes
+    enabled: yes
+    state: started
+
+
+- hosts: all
+  tasks:
+    - name: add nexus user
+      user:
+        name: nexus
+        comment: Nexus User
+        uid: 1500
+    - name: copy sudoers rules
+      copy:
+        src: files/20-nexus-sudoers
+        dest: /etc/sudoers.d/20-nexus
+        mode: 0440
+    - name: Mount NFS Share
+      mount:
+        path: /mnt/nfs_share
+        src: "{{ nfs_path }}"
+        fstype: nfs
+        opts: defaults
+        state: mounted
+    - name: Set ownership of nexus artefacts
+      file:
+        owner: nexus
+        recurse: yes
+        path: "/home/nexus/{{ item }}"
+      with_items:
+        - "nexus-{{ nexus_rm_version }}"
+        - "sonatype-work"
+    - name: Setup nexus.service file
+      template:
+        src: files/nexus.service
+        dest: /etc/systemd/system/nexus.service
+    - name: Start nexus server
+      systemd:
+        name: nexus
+        daemon_reload: yes
+        enabled: yes
+        state: started
