@@ -1,34 +1,34 @@
 ---
 # tasks file for nexus
 
-- name: Create volume groups
-  lvg: 
-     pvs="{{ item.pv }}"
-     vg="{{ item.vg }}"
-  with_items: "{{ filesystems }}"
-  
-- name: Create logical volumes 
-  lvol:
-     lv="{{ item.name }}"
-     vg="{{ item.vg }}"
-     size="{{ item.size }}"
-     state=present
-  with_items: "{{ filesystems }}"
-
-- name: Create file systems
-  filesystem:
-     dev="/dev/mapper/{{ item.vg }}-{{ item.name }}"
-     fstype="{{ item.fs }}"
-  with_items: "{{ filesystems }}"
-
-- name: Mount file systems
-  mount: 
-     name="{{ item.mountpoint }}" 
-     src="/dev/mapper/{{ item.vg }}-{{ item.name }}" 
-     fstype="{{ item.fs }}"
-     opts="{{ item.options }}"
-     state=mounted
-  with_items: "{{ filesystems }}"
+#- name: Create volume groups
+#  lvg: 
+#     pvs="{{ item.pv }}"
+#     vg="{{ item.vg }}"
+#  with_items: "{{ filesystems }}"
+#  
+#- name: Create logical volumes 
+#  lvol:
+#     lv="{{ item.name }}"
+#     vg="{{ item.vg }}"
+#     size="{{ item.size }}"
+#     state=present
+#  with_items: "{{ filesystems }}"
+#
+#- name: Create file systems
+#  filesystem:
+#     dev="/dev/mapper/{{ item.vg }}-{{ item.name }}"
+#     fstype="{{ item.fs }}"
+#  with_items: "{{ filesystems }}"
+#
+#- name: Mount file systems
+#  mount: 
+#     name="{{ item.mountpoint }}" 
+#     src="/dev/mapper/{{ item.vg }}-{{ item.name }}" 
+#     fstype="{{ item.fs }}"
+#     opts="{{ item.options }}"
+#     state=mounted
+#  with_items: "{{ filesystems }}"
 
 
 - name: update packages
@@ -45,23 +45,12 @@
       - wget
       - java-1.8.0-openjdk.x86_64
     
-- name: Get nexus repository manager
-  command: "wget https://download.sonatype.com/nexus/3/latest-unix.tar.gz -O /home/nexus/latest-unix.tar.gz"
-    
-- name: Unpack archive
-  unarchive:
-    copy: no
-    owner: nexus
-    src: /home/nexus/latest-unix.tar.gz
-    dest: /home/nexus/
-
-- name: Configure maximum open files
-  template:
-    src: templates/etc/security/limits.d/60-nexus.conf.j2
-    dest: /etc/security/limits.d/60-nexus.conf
-    owner: root
-    group: root
-    mode: 0644
+- name: add nexus user
+  user:
+    name: {{owner}}
+    comment: Nexus User
+    uid: 1500
+    group: {{group}}
 
 - name: Create user home dir
   file:
@@ -93,31 +82,36 @@
      line: "NEXUS_HOME={{ install_dir }}/nexus-{{ nexus_release }}; export NEXUS_HOME"
      backup: yes
 
-- name: Create mountable dir for media server
+- name: Create the dir for media server
   file:
-    path: "{{ media_mnt }}"
+    path: "{{media_mnt}}"
     state: directory
     mode: 0755
 
-- name: Mount the media server and path to remote host
-  mount:
-    path: "{{ media_mnt }}"
-    src: "{{ media_server }}:{{ media_path }}"
-    fstype: nfs
-    state: mounted
+- name: Get nexus repository manager
+  command: "wget https://download.sonatype.com/nexus/3/latest-unix.tar.gz -O /{{media_mnt}}/{{media_tar}}"
 
+- name: copy sudoers rules
+  copy:
+    src: templates/20-nexus-sudoers.j2
+    dest: /etc/sudoers.d/20-nexus
+    mode: 0440
+    
 - name: Unpack archive
   unarchive:
-    src: "{{ media_mnt }}/{{ media_tar }}"
-    dest: "{{ install_dir }}"
-    owner: "{{ owner }}"
-    group: "{{ group }}"
+    src: "{{media_mnt}}/{{media_tar}}"
+    dest: "{[install_dir}}"
     copy: no
+    owner: "{{owner}}"
+    group: "{[group}}"
 
-- name: Remove mounted dir
-  file:
-    path: "{{ media_mnt }}"
-    state: absent
+- name: Configure maximum open files
+  template:
+    src: templates/etc/security/limits.d/60-nexus.conf.j2
+    dest: /etc/security/limits.d/60-nexus.conf
+    owner: root
+    group: root
+    mode: 0644
 
 - name: Change ownership of install dir
   file:
@@ -161,10 +155,15 @@
     state: directory
     mode: 0755
 
+- name: Create nfs share
+  lineinfile:
+    path: /etc/exports
+    line: '/blobs 192.168.56.102(rw,sync,no_root_squash)'
+
 - name: Mount the nfs server and path to nexus server
   mount:
     path: "{{ nexus_nfs_mnt }}"
-    src: "{{ lifecycle[env].nexus_nfs_server }}:{{ lifecycle[env].nexus_nfs_path }}"
+    src: "{{ nexus_nfs_server }}:{{ nexus_nfs_mnt }}"
     fstype: nfs
     state: mounted
 
@@ -192,40 +191,3 @@
     state: started
 
 
-- hosts: all
-  tasks:
-    - name: add nexus user
-      user:
-        name: nexus
-        comment: Nexus User
-        uid: 1500
-    - name: copy sudoers rules
-      copy:
-        src: files/20-nexus-sudoers
-        dest: /etc/sudoers.d/20-nexus
-        mode: 0440
-    - name: Mount NFS Share
-      mount:
-        path: /mnt/nfs_share
-        src: "{{ nfs_path }}"
-        fstype: nfs
-        opts: defaults
-        state: mounted
-    - name: Set ownership of nexus artefacts
-      file:
-        owner: nexus
-        recurse: yes
-        path: "/home/nexus/{{ item }}"
-      with_items:
-        - "nexus-{{ nexus_rm_version }}"
-        - "sonatype-work"
-    - name: Setup nexus.service file
-      template:
-        src: files/nexus.service
-        dest: /etc/systemd/system/nexus.service
-    - name: Start nexus server
-      systemd:
-        name: nexus
-        daemon_reload: yes
-        enabled: yes
-        state: started
