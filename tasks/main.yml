@@ -31,26 +31,30 @@
 #  with_items: "{{ filesystems }}"
 
 
-- name: update packages
-    yum:
-      name: '*'
-      state: latest
-      update_cache: yes
+#- name: update packages
+#  yum:
+#    name: '*'
+#    state: latest
+#    update_cache: yes
     
-- name: install jre and wget
-    yum:
-      name: "{{ item }}"
-      state: latest
-    with_items:
-      - wget
-      - java-1.8.0-openjdk.x86_64
+- name: install jre
+  yum:
+    name: "{{ item }}"
+    state: latest
+  with_items:
+    - java-1.8.0-openjdk.x86_64
+
+- name: ensure nexus group exists
+  group: 
+    name: "{{group}}"
+    state: present
     
 - name: add nexus user
   user:
-    name: {{owner}}
+    name: "{{owner}}"
     comment: Nexus User
     uid: 1500
-    group: {{group}}
+    group: "{{group}}"
 
 - name: Create user home dir
   file:
@@ -72,7 +76,6 @@
     - ".bash_logout"
     - ".bash_profile"
     - ".bashrc"
-    - ".kshrc"
 
 - name: Add Nexus home environment variable
   lineinfile:
@@ -89,21 +92,24 @@
     mode: 0755
 
 - name: Get nexus repository manager
-  command: "wget https://download.sonatype.com/nexus/3/latest-unix.tar.gz -O /{{media_mnt}}/{{media_tar}}"
+  get_url:
+    url:  https://download.sonatype.com/nexus/3/latest-unix.tar.gz
+    dest: /{{media_mnt}}/{{media_tar}}
 
 - name: copy sudoers rules
   copy:
-    src: templates/20-nexus-sudoers.j2
+    src: templates/etc/20-nexus-sudoers.j2
     dest: /etc/sudoers.d/20-nexus
     mode: 0440
     
 - name: Unpack archive
-  unarchive:
-    src: "{{media_mnt}}/{{media_tar}}"
-    dest: "{[install_dir}}"
-    copy: no
-    owner: "{{owner}}"
-    group: "{[group}}"
+  command: tar -xzf "{{media_mnt}}/{{media_tar}}" -C "{{install_dir}}"
+#  unarchive:
+#    src: "{{media_mnt}}/{{media_tar}}"
+#    dest: "{{install_dir}}"
+#    owner: "{{owner}}"
+#    group: "{[group}}"
+#    remote_src: yes
 
 - name: Configure maximum open files
   template:
@@ -158,7 +164,7 @@
 - name: Create nfs share
   lineinfile:
     path: /etc/exports
-    line: '/blobs 192.168.56.102(rw,sync,no_root_squash)'
+    line: '/nfs {{nexus_nfs_server}}(rw,sync)'
 
 - name: Mount the nfs server and path to nexus server
   mount:
